@@ -1,0 +1,7 @@
+{
+  "name": "EduPay Manager",
+  "description": "A payment management system for school transport and meals, converted to PHP.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EduPay Manager</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#2563eb', // blue-600
+            secondary: '#475569', // slate-600
+            success: '#16a34a', // green-600
+            danger: '#dc2626', // red-600
+            warning: '#eab308', // yellow-500
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Babel for JSX compilation in browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Import Map -->
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.263.1?deps=react@18.2.0",
+    "date-fns": "https://esm.sh/date-fns@2.30.0",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.5.29",
+    "qrcode": "https://esm.sh/qrcode@1.5.3",
+    "html5-qrcode": "https://esm.sh/html5-qrcode@2.3.8",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+
+  <style>
+    /* Custom Scrollbar for nicer UI */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1; 
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1; 
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8; 
+    }
+
+    /* Print Styles */
+    @media print {
+        @page { size: landscape; margin: 1cm; }
+        body { background: white; -webkit-print-color-adjust: exact; }
+        aside, .no-print, .actions-col { display: none !important; }
+        main { padding: 0 !important; margin: 0 !important; height: auto !important; overflow: visible !important; width: 100% !important; }
+        #root { width: 100%; }
+        table { width: 100% !important; border-collapse: collapse; font-size: 10pt; }
+        th, td { border: 1px solid #ddd; padding: 4px; color: black !important; }
+        thead th { background-color: #f3f4f6 !important; color: #111 !important; }
+        .print-full-width { width: 100% !important; max-width: none !important; }
+        /* Hide scrollbars in print */
+        ::-webkit-scrollbar { display: none; }
+    }
+    
+    @keyframes pulse-green {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); }
+        50% { box-shadow: 0 0 0 20px rgba(22, 163, 74, 0); }
+    }
+    .scan-success {
+        animation: pulse-green 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div id="root"></div>
+
+  <!-- Application Logic -->
+  <script src="main.js" type="text/babel" data-type="module" data-presets="react,typescript"></script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
