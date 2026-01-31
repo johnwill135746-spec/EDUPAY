@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
     import ReactDOM from 'react-dom/client';
     import { 
@@ -7,12 +8,13 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
       Bus, Utensils, GraduationCap, KeyRound, AlertTriangle, Trash2, History, ChevronUp, ChevronDown,
       Printer, MapPin, Upload, QrCode, ScanLine, Copy, Truck, RefreshCw, Smartphone, List, BadgeCheck, Camera
     } from 'lucide-react';
-    import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
     import { format, differenceInHours } from 'date-fns';
     import jsPDF from 'jspdf';
     import autoTable from 'jspdf-autotable';
     import QRCode from 'qrcode';
     import { Html5Qrcode } from 'html5-qrcode';
+    import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+
 
     // --- Local Storage Configuration ---
     const STORAGE_KEYS = {
@@ -1017,12 +1019,18 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
       const total = students.length;
       const transportPaid = students.filter(s => s.transport?.isPaid).length;
       const mealPaid = students.filter(s => s.meal?.isPaid).length;
-      const transportUnpaid = total - transportPaid;
-      const mealUnpaid = total - mealPaid;
 
-      const paymentData = [
-          { name: 'Transport', Paid: transportPaid, Unpaid: transportUnpaid },
-          { name: 'Meals', Paid: mealPaid, Unpaid: mealUnpaid },
+      const chartData = [
+          {
+              name: 'Transport',
+              Paid: transportPaid,
+              Pending: total > 0 ? total - transportPaid : 0,
+          },
+          {
+              name: 'Meals',
+              Paid: mealPaid,
+              Pending: total > 0 ? total - mealPaid : 0,
+          }
       ];
 
       const StatCard = ({ title, count, icon: Icon, color, onClick }) => (
@@ -1056,36 +1064,27 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-bold text-gray-800 mb-6">Collection Progress</h3>
-             <div className="w-full h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                        data={paymentData}
-                        margin={{
-                            top: 5, right: 20, left: -10, bottom: 5,
-                        }}
-                    >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" tick={{ fill: '#4b5563', fontSize: 14 }} />
-                        <YAxis allowDecimals={false} tick={{ fill: '#4b5563', fontSize: 14 }} />
+             <div className="w-full h-72">
+                <ResponsiveContainer>
+                    <BarChart data={chartData} margin={{ top: 5, right: 20, left: -15, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 14 }} />
+                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} />
                         <Tooltip
-                            cursor={{fill: 'rgba(243, 244, 246, 0.5)'}}
+                            cursor={{ fill: 'rgba(243, 244, 246, 0.5)' }}
                             contentStyle={{
-                                backgroundColor: 'white',
-                                borderRadius: '0.75rem',
+                                background: 'white',
                                 border: '1px solid #e5e7eb',
-                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)'
+                                borderRadius: '0.75rem',
+                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
                             }}
                         />
                         <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                        <Bar dataKey="Paid" stackId="a" name="Paid">
-                            {paymentData.map((entry, index) => (
-                                <Cell key={`cell-paid-${index}`} fill={entry.name === 'Transport' ? '#4f46e5' : '#ea580c'} />
-                            ))}
-                        </Bar>
-                        <Bar dataKey="Unpaid" stackId="a" name="Unpaid" fill="#9ca3af" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Paid" stackId="a" fill="#4338ca" name="Paid" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="Pending" stackId="a" fill="#f97316" name="Pending" radius={[8, 8, 0, 0]} />
                     </BarChart>
                 </ResponsiveContainer>
-            </div>
+             </div>
           </div>
         </div>
       );
