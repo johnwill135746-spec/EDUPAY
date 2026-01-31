@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
     import ReactDOM from 'react-dom/client';
     import { 
@@ -13,8 +12,6 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
     import autoTable from 'jspdf-autotable';
     import QRCode from 'qrcode';
     import { Html5Qrcode } from 'html5-qrcode';
-    import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
-
 
     // --- Local Storage Configuration ---
     const STORAGE_KEYS = {
@@ -80,17 +77,42 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                 name: 'System Admin',
                 email: 'admin@school.com',
                 password: 'password', 
-                role: 'ADMIN'
+                role: 'ADMIN',
+                pin: '2026'
             }]);
+        } else {
+            // Migrate existing users to have a PIN if they don't have one
+            let needsUpdate = false;
+            const updatedUsers = users.map(u => {
+                if (!u.pin) {
+                    needsUpdate = true;
+                    return { ...u, pin: '0000' };
+                }
+                return u;
+            });
+            if (needsUpdate) {
+                setStoredData(STORAGE_KEYS.USERS, updatedUsers);
+            }
         }
     };
 
     const addUser = async (user) => {
         const users = getStoredData(STORAGE_KEYS.USERS, []);
         if (users.some(u => u.email === user.email)) throw new Error("Email already exists.");
-        const newUser = { ...user, uid: generateUniqueId() };
+        const newUser = { ...user, uid: generateUniqueId(), pin: user.pin || '0000' };
         setStoredData(STORAGE_KEYS.USERS, [...users, newUser]);
         return newUser;
+    };
+
+    const updateUserPin = async (uid, newPin) => {
+        const users = getStoredData(STORAGE_KEYS.USERS, []);
+        const idx = users.findIndex(u => u.uid === uid);
+        if (idx > -1) {
+            users[idx].pin = newPin;
+            setStoredData(STORAGE_KEYS.USERS, users);
+            return true;
+        }
+        throw new Error("User not found");
     };
 
     const removeUser = async (uid) => {
@@ -701,14 +723,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
         try {
           const result = await mockAuth.signIn(email, password);
           
-          if (result.user.role === 'ADMIN') {
-              setTempUser(result.user);
-              setStage('PIN');
-              setLoading(false);
-          } else {
-              // Staff/Driver login immediately (no PIN needed)
-              onLoginSuccess(result.user);
-          }
+          // All users now need PIN verification
+          setTempUser(result.user);
+          setStage('PIN');
+          setLoading(false);
         } catch (err) {
           setError(err.message || "Authentication failed");
           setLoading(false);
@@ -728,16 +746,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                   role: regRole
               };
 
-              await addUser(newUser);
+              const createdUser = await addUser(newUser);
               
-              // Auto-login logic
-              if (newUser.role === 'ADMIN') {
-                  setTempUser(newUser);
-                  setStage('PIN');
-                  setLoading(false);
-              } else {
-                  onLoginSuccess(newUser);
-              }
+              // All users need PIN verification after registration
+              setTempUser(createdUser);
+              setStage('PIN');
+              setLoading(false);
           } catch (err) {
               setError(err.message || "Registration failed");
               setLoading(false);
@@ -750,10 +764,14 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
         setError('');
 
         try {
-          if (pin === '2026') {
-            onLoginSuccess(tempUser);
+          // Verify against user's stored PIN
+          const users = getStoredData(STORAGE_KEYS.USERS, []);
+          const user = users.find(u => u.uid === tempUser.uid);
+          
+          if (user && pin === user.pin) {
+            onLoginSuccess(user);
           } else {
-            setError('Incorrect Admin PIN.');
+            setError('Incorrect PIN.');
             setLoading(false);
           }
         } catch (err) {
@@ -775,7 +793,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
             <div className="p-8">
               <h3 className="text-xl font-bold text-gray-800 mb-6 text-center">
-                 {stage === 'PIN' ? 'Admin Verification' : (isRegistering ? 'Create Account' : 'Login to Dashboard')}
+                 {stage === 'PIN' ? 'PIN Verification' : (isRegistering ? 'Create Account' : 'Login to Dashboard')}
               </h3>
 
               {error && (
@@ -1019,19 +1037,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
       const total = students.length;
       const transportPaid = students.filter(s => s.transport?.isPaid).length;
       const mealPaid = students.filter(s => s.meal?.isPaid).length;
-
-      const chartData = [
-          {
-              name: 'Transport',
-              Paid: transportPaid,
-              Pending: total > 0 ? total - transportPaid : 0,
-          },
-          {
-              name: 'Meals',
-              Paid: mealPaid,
-              Pending: total > 0 ? total - mealPaid : 0,
-          }
-      ];
+      
+      const transportPct = total > 0 ? Math.round((transportPaid / total) * 100) : 0;
+      const mealPct = total > 0 ? Math.round((mealPaid / total) * 100) : 0;
 
       const StatCard = ({ title, count, icon: Icon, color, onClick }) => (
         <div 
@@ -1046,6 +1054,29 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
           </div>
           <h3 className="text-gray-500 text-sm font-medium uppercase tracking-wider">{title}</h3>
           <p className="text-3xl font-bold text-gray-800 mt-1">{count}</p>
+        </div>
+      );
+
+      const ProgressBar = ({ label, percentage, colorClass, bgClass }) => (
+        <div className="mb-6">
+            <div className="flex mb-2 items-center justify-between">
+            <div>
+                <span className={`text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full ${colorClass} bg-opacity-20`}>
+                {label}
+                </span>
+            </div>
+            <div className="text-right">
+                <span className={`text-xs font-semibold inline-block ${colorClass.replace('text-', '')}`}>
+                {percentage}%
+                </span>
+            </div>
+            </div>
+            <div className={`overflow-hidden h-4 mb-4 text-xs flex rounded-full ${bgClass}`}>
+            <div 
+                style={{ width: `${percentage}%` }} 
+                className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${colorClass.replace('text-', 'bg-')} transition-all duration-1000 ease-out`}
+            ></div>
+            </div>
         </div>
       );
 
@@ -1064,27 +1095,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-bold text-gray-800 mb-6">Collection Progress</h3>
-             <div className="w-full h-72">
-                <ResponsiveContainer>
-                    <BarChart data={chartData} margin={{ top: 5, right: 20, left: -15, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                        <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 14 }} />
-                        <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#6b7280', fontSize: 12 }} />
-                        <Tooltip
-                            cursor={{ fill: 'rgba(243, 244, 246, 0.5)' }}
-                            contentStyle={{
-                                background: 'white',
-                                border: '1px solid #e5e7eb',
-                                borderRadius: '0.75rem',
-                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
-                            }}
-                        />
-                        <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                        <Bar dataKey="Paid" stackId="a" fill="#4338ca" name="Paid" radius={[8, 8, 0, 0]} />
-                        <Bar dataKey="Pending" stackId="a" fill="#f97316" name="Pending" radius={[8, 8, 0, 0]} />
-                    </BarChart>
-                </ResponsiveContainer>
-             </div>
+            <ProgressBar label="Transport" percentage={transportPct} colorClass="text-indigo-600" bgClass="bg-indigo-100" />
+            <ProgressBar label="Meals" percentage={mealPct} colorClass="text-orange-600" bgClass="bg-orange-100" />
           </div>
         </div>
       );
@@ -1557,6 +1569,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
       const [users, setUsers] = useState([]);
       const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'STAFF' });
       const [showUserForm, setShowUserForm] = useState(false);
+      
+      // PIN Management State
+      const [editingPinUid, setEditingPinUid] = useState(null);
+      const [newPin, setNewPin] = useState('');
 
       useEffect(() => {
         getAppSettings().then(settings => {
@@ -1572,7 +1588,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
               setUsers(getStoredData(STORAGE_KEYS.USERS, []));
               setNewUser({ name: '', email: '', password: '', role: 'STAFF' });
               setShowUserForm(false);
-              setMsg({ type: 'success', text: 'User added successfully' });
+              setMsg({ type: 'success', text: 'User added successfully (Default PIN: 0000)' });
           } catch(e) {
               setMsg({ type: 'error', text: e.message });
           }
@@ -1583,6 +1599,22 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
           if(confirm("Delete this user?")) {
               removeUser(uid);
               setUsers(getStoredData(STORAGE_KEYS.USERS, []));
+          }
+      };
+
+      const handlePinChange = async (uid) => {
+          if (!newPin || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
+              setMsg({ type: 'error', text: 'PIN must be exactly 4 digits.' });
+              return;
+          }
+          try {
+              await updateUserPin(uid, newPin);
+              setUsers(getStoredData(STORAGE_KEYS.USERS, []));
+              setEditingPinUid(null);
+              setNewPin('');
+              setMsg({ type: 'success', text: 'PIN updated successfully.' });
+          } catch (e) {
+              setMsg({ type: 'error', text: e.message });
           }
       };
 
@@ -1635,13 +1667,52 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
             <div className="space-y-2">
                 {users.map(u => (
-                    <div key={u.uid} className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-100">
-                        <div>
-                            <p className="font-bold text-sm">{u.name} <span className="text-xs font-normal text-gray-500">({u.role})</span></p>
-                            <p className="text-xs text-gray-400">{u.email}</p>
+                    <div key={u.uid} className="p-3 bg-gray-50 rounded border border-gray-100">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className="font-bold text-sm">{u.name} <span className="text-xs font-normal text-gray-500">({u.role})</span></p>
+                                <p className="text-xs text-gray-400">{u.email}</p>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <button 
+                                    onClick={() => {
+                                        if (editingPinUid === u.uid) {
+                                            setEditingPinUid(null);
+                                            setNewPin('');
+                                        } else {
+                                            setEditingPinUid(u.uid);
+                                            setNewPin('');
+                                        }
+                                    }} 
+                                    className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded hover:bg-blue-200 flex items-center gap-1"
+                                >
+                                    <KeyRound size={14} />
+                                    {editingPinUid === u.uid ? 'Cancel' : 'Change PIN'}
+                                </button>
+                                {u.uid !== user.uid && (
+                                    <button onClick={() => handleUserDelete(u.uid)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={16}/></button>
+                                )}
+                            </div>
                         </div>
-                        {u.uid !== user.uid && (
-                            <button onClick={() => handleUserDelete(u.uid)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={16}/></button>
+                        
+                        {/* PIN Edit Form */}
+                        {editingPinUid === u.uid && (
+                            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center gap-2">
+                                <input 
+                                    type="text" 
+                                    maxLength={4}
+                                    placeholder="Enter new 4-digit PIN"
+                                    className="flex-1 p-2 border rounded text-center font-mono text-lg tracking-widest"
+                                    value={newPin}
+                                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                                />
+                                <button 
+                                    onClick={() => handlePinChange(u.uid)}
+                                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm font-medium"
+                                >
+                                    Save PIN
+                                </button>
+                            </div>
                         )}
                     </div>
                 ))}
