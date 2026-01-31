@@ -114,6 +114,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
         ...student,
         gender: student.gender || 'Not Specified',
         dropLocation: student.dropLocation || '',
+        pickUpPoint: student.pickUpPoint || '',
+        busName: student.busName || '',
+        busNumber: student.busNumber || '',
         transport: {
           isPaid: student.transportPaid || false, 
           history: student.transportPaid ? [{ date: new Date().toISOString(), timestamp: Date.now() }] : [],
@@ -145,6 +148,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
             gender: s.gender || 'Not Specified',
             className: s.className,
             dropLocation: s.dropLocation || '',
+            pickUpPoint: s.pickUpPoint || '',
+            busName: s.busName || '',
+            busNumber: s.busNumber || '',
             adminNumber: s.adminNumber,
             transport: {
                 isPaid: s.transportPaid,
@@ -1459,6 +1465,18 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                                             </h4>
                                             <HistoryList history={student.meal?.history} type="Meals" />
                                         </div>
+                                        {/* Added Bus Info Detail Section */}
+                                        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm md:col-span-2">
+                                            <h4 className="font-bold text-gray-800 mb-4 flex items-center pb-2 border-b border-gray-100">
+                                                <Truck size={16} className="text-blue-600 mr-2"/> Route & Bus Information
+                                            </h4>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Pick-up Point</p><p className="text-sm">{student.pickUpPoint || 'N/A'}</p></div>
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Dropping Point</p><p className="text-sm">{student.dropLocation || 'N/A'}</p></div>
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Bus Name</p><p className="text-sm">{student.busName || 'N/A'}</p></div>
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Bus Number</p><p className="text-sm">{student.busNumber || 'N/A'}</p></div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </td>
                             </tr>
@@ -1533,6 +1551,85 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      );
+    };
+
+    // Advanced Bulk Add Component
+    const AdvancedBulkAdd = ({ onSuccess }) => {
+      const [csvText, setCsvText] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleImport = async () => {
+        if (!csvText.trim()) return;
+        setLoading(true);
+        try {
+          const lines = csvText.split('\n');
+          const data = [];
+          let start = 0;
+          if (lines[0].toLowerCase().includes('name')) start = 1;
+          for (let i = start; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const row = line.split(',').map(c => c.trim());
+            if (row.length < 9) continue;
+            // Format: Name, Gender, Class, PickUp, DropOff, BusName, BusNumber, AdminNo, TransportPaid, MealPaid
+            const isTrue = (val) => val && ['yes', 'true', 'paid', 'y', '1'].includes(val.toLowerCase());
+            data.push({
+              name: row[0],
+              gender: row[1],
+              className: row[2],
+              pickUpPoint: row[3],
+              dropLocation: row[4],
+              busName: row[5],
+              busNumber: row[6],
+              adminNumber: row[7],
+              transportPaid: isTrue(row[8]),
+              mealPaid: isTrue(row[9])
+            });
+          }
+          if (data.length > 0) {
+            await bulkAddStudents(data);
+            alert(`Successfully imported ${data.length} students with advanced details.`);
+            onSuccess();
+          } else {
+            alert("No valid data found. Use Format: Name, Gender, Class, PickUp, DropOff, BusName, BusNumber, AdminNo, TransportPaid, MealPaid");
+          }
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-gray-800">Advanced Bulk Import</h2>
+            <p className="text-gray-500">Add many students including pick-up, dropping, and bus details.</p>
+          </div>
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+            <div className="mb-6 bg-blue-50 p-4 rounded text-sm text-blue-800">
+              <p className="font-bold mb-2">Required CSV Column Order (10 Columns):</p>
+              <div className="font-mono bg-white/50 p-3 rounded border border-blue-100 overflow-x-auto text-xs">
+                Name, Gender, Class, PickUp Point, Dropping Point, Bus Name, Bus Number, Admin No, Transport Paid (Yes/No), Meal Paid (Yes/No)
+              </div>
+            </div>
+            <textarea 
+              className="w-full h-80 p-4 border rounded-xl font-mono text-sm mb-4 focus:ring-2 focus:ring-primary focus:outline-none" 
+              placeholder="Example: John Doe, Male, 10-A, North Gate, South Street, Blue-Bus, B-101, ADM-001, Yes, No"
+              value={csvText}
+              onChange={e => setCsvText(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <button 
+                onClick={handleImport} 
+                disabled={loading || !csvText.trim()}
+                className={`flex items-center gap-2 bg-primary text-white px-8 py-3 rounded-lg font-bold shadow-lg hover:bg-blue-700 transition ${loading ? 'opacity-50' : ''}`}
+              >
+                {loading ? <RefreshCw className="animate-spin" size={20} /> : <Upload size={20} />}
+                {loading ? 'Processing...' : 'Import Advanced Data'}
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -1747,6 +1844,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
               {isAdmin && <NavItem tab="DASHBOARD" icon={LayoutDashboard} label="Dashboard" />}
               <NavItem tab="STUDENTS" icon={Users} label={isAdmin ? "Students" : "List"} />
               {isAdmin && <NavItem tab="ADD_STUDENT" icon={UserPlus} label="Add Student" />}
+              {isAdmin && <NavItem tab="BULK_ADD_BUS" icon={Truck} label="Bulk Bus Import" />}
               {isAdmin && <NavItem tab="HISTORY" icon={List} label="Scan History" />}
               {isAdmin && <NavItem tab="SETTINGS" icon={SettingsIcon} label="Settings" />}
               <NavItem tab="SCANNER" icon={ScanLine} label="QR Scanner" />
@@ -1771,6 +1869,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
               {currentTab === 'DASHBOARD' && isAdmin && <Dashboard students={students} changeTab={setCurrentTab} />}
               {currentTab === 'STUDENTS' && <StudentList students={students} role={userProfile.role} />}
               {currentTab === 'ADD_STUDENT' && isAdmin && <AddStudent onSuccess={() => setCurrentTab('STUDENTS')} />}
+              {currentTab === 'BULK_ADD_BUS' && isAdmin && <AdvancedBulkAdd onSuccess={() => setCurrentTab('STUDENTS')} />}
               {currentTab === 'HISTORY' && isAdmin && <ScanHistory />}
               {currentTab === 'SETTINGS' && isAdmin && <Settings user={userProfile} />}
               {currentTab === 'SCANNER' && <Scanner students={students} currentUser={userProfile} onClose={() => setCurrentTab('STUDENTS')} />}
