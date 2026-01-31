@@ -95,9 +95,9 @@ const addStudent = async (student) => {
   await new Promise(resolve => setTimeout(resolve, 300));
   const students = getStoredData(STORAGE_KEYS.STUDENTS, []);
   
-  // Check for duplicate Admin Number
+  // Prevent duplicates
   if (students.some(s => s.adminNumber === student.adminNumber)) {
-    throw new Error("A student with this Admin Number already exists.");
+    throw new Error("Student with this Administration Number already exists.");
   }
 
   const newStudent = {
@@ -135,42 +135,38 @@ const bulkAddStudents = async (newStudentsData) => {
     const isoNow = now.toISOString();
     const timestamp = now.getTime();
 
-    const filteredNewStudents = [];
-    for (const s of newStudentsData) {
-        // Duplicate check
-        if (currentStudents.some(cs => cs.adminNumber === s.adminNumber) || filteredNewStudents.some(fs => fs.adminNumber === s.adminNumber)) {
-            continue;
+    const filteredNewStudents = newStudentsData.filter(s => 
+      !currentStudents.some(cs => cs.adminNumber === s.adminNumber)
+    );
+
+    const newStudents = filteredNewStudents.map(s => ({
+        id: generateUniqueId(),
+        name: s.name,
+        gender: s.gender || 'Not Specified',
+        className: s.className,
+        dropLocation: s.dropLocation || '',
+        parentName: s.parentName || '',
+        parentContact: s.parentContact || '',
+        parentRelationship: s.parentRelationship || 'Guardian',
+        busNumber: s.busNumber || '',
+        busName: s.busName || '',
+        adminNumber: s.adminNumber,
+        transport: {
+            isPaid: s.transportPaid,
+            history: s.transportPaid ? [{ date: isoNow, timestamp }] : [],
+            lastPaymentDate: s.transportPaid ? isoNow : null,
+            lastScanTime: null
+        },
+        meal: {
+            isPaid: s.mealPaid,
+            history: s.mealPaid ? [{ date: isoNow, timestamp }] : [],
+            lastPaymentDate: s.mealPaid ? isoNow : null,
+            lastScanTime: null
         }
+    }));
 
-        filteredNewStudents.push({
-            id: generateUniqueId(),
-            name: s.name,
-            gender: s.gender || 'Not Specified',
-            className: s.className,
-            dropLocation: s.dropLocation || '',
-            adminNumber: s.adminNumber,
-            parentName: s.parentName || '',
-            parentContact: s.parentContact || '',
-            parentRelationship: s.parentRelationship || 'Guardian',
-            busNumber: s.busNumber || '',
-            busName: s.busName || '',
-            transport: {
-                isPaid: s.transportPaid,
-                history: s.transportPaid ? [{ date: isoNow, timestamp }] : [],
-                lastPaymentDate: s.transportPaid ? isoNow : null,
-                lastScanTime: null
-            },
-            meal: {
-                isPaid: s.mealPaid,
-                history: s.mealPaid ? [{ date: isoNow, timestamp }] : [],
-                lastPaymentDate: s.mealPaid ? isoNow : null,
-                lastScanTime: null
-            }
-        });
-    }
-
-    setStoredData(STORAGE_KEYS.STUDENTS, [...currentStudents, ...filteredNewStudents]);
-    return filteredNewStudents.length;
+    setStoredData(STORAGE_KEYS.STUDENTS, [...currentStudents, ...newStudents]);
+    return newStudents.length;
 };
 
 const deleteStudent = async (id) => {
@@ -444,9 +440,13 @@ const Scanner = ({ students, currentUser, onClose }) => {
             let type = "INFO";
 
             // Determine Check Type
-            if (user.assignedType === 'TRANSPORT') type = 'transport';
-            else if (user.assignedType === 'MEAL') type = 'meal';
-            else if (currentRole === 'ADMIN') type = 'info';
+            // In new requirements, STAFF handles meals and transport based on their configuration
+            if (user.role === 'STAFF') {
+              // Determine if staff is for transport (has assigned bus) or meals
+              if (user.assignedBusNumber) type = 'transport';
+              else type = 'meal';
+            } else if (currentRole === 'DRIVER') type = 'transport';
+            else type = 'info';
 
             // --- LOGIC START ---
 
@@ -458,36 +458,38 @@ const Scanner = ({ students, currentUser, onClose }) => {
                 status = 'SUCCESS';
                 message = "Record Found";
             } else {
-                const serviceData = student[type];
-                
-                // 1. ACCESS CONTROL (Bus Specific)
-                if (user.role === 'STAFF' && user.assignedType === 'TRANSPORT' && user.assignedBus && student.busNumber !== user.assignedBus) {
+                // Check if Staff is on wrong bus
+                if (type === 'transport' && user.assignedBusNumber && student.busNumber !== user.assignedBusNumber) {
                     status = 'WRONG_BUS';
-                    message = "Student to enter another bus";
-                } else if (!serviceData || !serviceData.isPaid) {
-                    // 2. PAYMENT CHECK (Admin Settings Check)
-                    status = 'FAILURE';
-                    message = "NOT APPROVED"; // Strict denial if not paid/eligible
+                    message = "Wrong Bus - Student belongs to Bus " + (student.busNumber || "N/A");
                 } else {
-                    // 3. COOLDOWN CHECK (12-Hour Logic)
-                    const lastScan = serviceData.lastScanTime;
+                    const serviceData = student[type];
                     
-                    if (lastScan) {
-                        const lastScanDate = new Date(lastScan);
-                        const now = new Date();
-                        const diff = differenceInHours(now, lastScanDate);
+                    // 1. PAYMENT CHECK (Admin Settings Check)
+                    if (!serviceData || !serviceData.isPaid) {
+                        status = 'FAILURE';
+                        message = "Not Approved"; // Updated for prompt: "red not approved"
+                    } else {
+                        // 2. COOLDOWN CHECK (12-Hour Logic)
+                        const lastScan = serviceData.lastScanTime;
                         
-                        if (diff < 12) {
-                            status = 'REPEATED';
-                            message = `Repeated: Wait ${12 - diff}h`;
+                        if (lastScan) {
+                            const lastScanDate = new Date(lastScan);
+                            const now = new Date();
+                            const diff = differenceInHours(now, lastScanDate);
+                            
+                            if (diff < 12) {
+                                status = 'REPEATED';
+                                message = `Repeated: Wait ${12 - diff}h`;
+                            } else {
+                                status = 'SUCCESS';
+                                message = "Approved";
+                            }
                         } else {
+                            // First time scan
                             status = 'SUCCESS';
                             message = "Approved";
                         }
-                    } else {
-                        // First time scan
-                        status = 'SUCCESS';
-                        message = "Approved";
                     }
                 }
             }
@@ -497,14 +499,14 @@ const Scanner = ({ students, currentUser, onClose }) => {
             logScan({
                 studentName: student ? student.name : 'Unknown',
                 studentId: decodedText,
+                studentGender: student ? student.gender : '-',
+                studentClass: student ? student.className : '-',
+                studentLocation: student ? student.dropLocation : '-',
                 type: type === 'info' ? 'QUERY' : type.toUpperCase(),
                 status: status,
                 message: message,
                 scannedBy: user.email,
-                scannedByName: user.name,
-                studentClass: student ? student.className : '',
-                studentGender: student ? student.gender : '',
-                studentDropLocation: student ? student.dropLocation : ''
+                scannedByName: user.name
             });
 
             // Update UI
@@ -520,6 +522,8 @@ const Scanner = ({ students, currentUser, onClose }) => {
                 playSound('success');
             } else if (status === 'REPEATED') {
                 playSound('repeated');
+            } else if (status === 'WRONG_BUS') {
+                playSound('failure');
             } else {
                 playSound('failure');
             }
@@ -537,7 +541,7 @@ const Scanner = ({ students, currentUser, onClose }) => {
                     // If resume fails, try restarting
                     startScanning();
                 }
-            }, 2500);
+            }, 4000); // Increased display time for detailed info
         };
 
         html5QrCode.start(
@@ -665,17 +669,20 @@ const Scanner = ({ students, currentUser, onClose }) => {
                             </div>
                         )}
 
-                        {/* Wrong Bus Overlay */}
+                        {/* WRONG BUS OVERLAY - NEW REQUIREMENT */}
                         {scanResult === 'WRONG_BUS' && (
-                            <div className="absolute inset-0 bg-red-600 flex flex-col items-center justify-center text-white animate-in zoom-in duration-300 z-20 p-6 text-center">
-                                <AlertTriangle size={60} className="mb-2" />
-                                <h3 className="text-xl font-bold">{scannedStudent?.name}</h3>
-                                <p className="bg-white text-red-600 font-bold px-4 py-1 rounded-full text-sm my-2 shadow">STUDENT TO ENTER ANOTHER BUS</p>
-                                <div className="text-left bg-black/30 p-3 rounded text-sm w-full space-y-1">
-                                    <p><strong>Class:</strong> {scannedStudent?.className}</p>
-                                    <p><strong>Gender:</strong> {scannedStudent?.gender}</p>
-                                    <p><strong>Bus No:</strong> {scannedStudent?.busNumber}</p>
-                                    <p><strong>Drop-off:</strong> {scannedStudent?.dropLocation}</p>
+                            <div className="absolute inset-0 bg-orange-600 flex flex-col items-center justify-center text-white animate-in zoom-in duration-300 z-20 p-4">
+                                <Bus size={64} className="mb-2" />
+                                <h3 className="text-xl font-bold text-center mb-2 uppercase">Switch Bus</h3>
+                                <div className="bg-white/10 p-4 rounded-xl w-full space-y-2 text-sm">
+                                    <p><span className="opacity-70">Name:</span> <strong>{scannedStudent?.name}</strong></p>
+                                    <p><span className="opacity-70">Gender:</span> <strong>{scannedStudent?.gender}</strong></p>
+                                    <p><span className="opacity-70">Class:</span> <strong>{scannedStudent?.className}</strong></p>
+                                    <p><span className="opacity-70">Correct Bus:</span> <strong>{scannedStudent?.busNumber}</strong></p>
+                                    <p><span className="opacity-70">Drop Point:</span> <strong>{scannedStudent?.dropLocation}</strong></p>
+                                </div>
+                                <div className="mt-4 bg-white text-orange-600 font-bold px-6 py-2 rounded-full text-sm shadow-lg text-center">
+                                    STUDENT TO ENTER BUS {scannedStudent?.busNumber}
                                 </div>
                             </div>
                         )}
@@ -692,6 +699,9 @@ const Scanner = ({ students, currentUser, onClose }) => {
                     )}
                      {scanResult === 'FAILURE' && (
                         <p className="text-center text-red-600 font-bold animate-pulse">Scan Rejected! Resetting...</p>
+                    )}
+                     {scanResult === 'WRONG_BUS' && (
+                        <p className="text-center text-orange-600 font-bold animate-pulse">Mismatched Bus! Resetting...</p>
                     )}
                 </div>
             </div>
@@ -753,8 +763,7 @@ const Auth = ({ onLoginSuccess }) => {
               name: regName,
               email: regEmail,
               password: regPassword, 
-              role: regRole,
-              assignedType: 'MEAL' // Default
+              role: regRole
           };
 
           await addUser(newUser);
@@ -890,7 +899,7 @@ const Auth = ({ onLoginSuccess }) => {
                     <div className="relative">
                       <BadgeCheck className="absolute left-3 top-3 text-gray-400" size={18} />
                       <select value={regRole} onChange={(e) => setRegRole(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition bg-white text-gray-700">
-                        <option value="STAFF">Staff</option>
+                        <option value="STAFF">Staff (Meals/Transport)</option>
                         <option value="ADMIN">Admin</option>
                       </select>
                     </div>
@@ -961,6 +970,7 @@ const Auth = ({ onLoginSuccess }) => {
 const ScanHistory = () => {
     const [logs, setLogs] = useState([]);
     const [search, setSearch] = useState('');
+    const [viewType, setViewType] = useState('ALL'); // ALL or TRANSPORT
 
     useEffect(() => {
         setLogs(getStoredData(STORAGE_KEYS.SCAN_LOGS, []));
@@ -968,29 +978,38 @@ const ScanHistory = () => {
         return () => unsubscribe();
     }, []);
 
-    const filteredLogs = logs.filter(log => 
-        log.studentName.toLowerCase().includes(search.toLowerCase()) ||
-        log.scannedByName?.toLowerCase().includes(search.toLowerCase()) ||
-        log.status.toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredLogs = logs.filter(log => {
+        const matchesView = viewType === 'ALL' || (viewType === 'TRANSPORT' && log.type === 'TRANSPORT');
+        const matchesSearch = 
+            log.studentName.toLowerCase().includes(search.toLowerCase()) ||
+            log.scannedByName?.toLowerCase().includes(search.toLowerCase()) ||
+            log.status.toLowerCase().includes(search.toLowerCase());
+        return matchesView && matchesSearch;
+    });
 
     return (
         <div className="space-y-6">
              <div className="mb-8">
-                <h2 className="text-2xl font-bold text-gray-800">Scan Activity Logs</h2>
+                <h2 className="text-2xl font-bold text-gray-800">Activity Logs</h2>
                 <p className="text-gray-500">History of all QR scans performed by users.</p>
             </div>
 
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-4">
-                <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                        type="text"
-                        placeholder="Search logs by student name or scanner..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
-                    />
+            <div className="flex flex-col md:flex-row gap-4 items-center">
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex-1 flex gap-4">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                        <input
+                            type="text"
+                            placeholder="Search logs by student name or scanner..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                        />
+                    </div>
+                </div>
+                <div className="flex p-1 bg-white border border-gray-100 rounded-xl shadow-sm">
+                    <button onClick={() => setViewType('ALL')} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewType === 'ALL' ? 'bg-primary text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>All Scans</button>
+                    <button onClick={() => setViewType('TRANSPORT')} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewType === 'TRANSPORT' ? 'bg-primary text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>Transport Only</button>
                 </div>
             </div>
 
@@ -1001,11 +1020,10 @@ const ScanHistory = () => {
                             <tr>
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Timestamp</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Student</th>
+                                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Details</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Type</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Status</th>
-                                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Message</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Scanned By</th>
-                                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Drop Location</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
@@ -1016,7 +1034,12 @@ const ScanHistory = () => {
                                     </td>
                                     <td className="px-6 py-3">
                                         <div className="font-medium text-gray-900">{log.studentName}</div>
-                                        <div className="text-[10px] text-gray-400 uppercase">{log.studentClass} | {log.studentGender}</div>
+                                        <div className="text-[10px] text-gray-400 uppercase tracking-tight">{log.studentId}</div>
+                                    </td>
+                                    <td className="px-6 py-3">
+                                        <div className="text-xs text-gray-600">
+                                            <span className="opacity-70">Class:</span> {log.studentClass} | <span className="opacity-70">Loc:</span> {log.studentLocation}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-3 text-sm">
                                         <span className={`px-2 py-1 rounded-full text-xs font-bold ${log.type === 'TRANSPORT' ? 'bg-indigo-100 text-indigo-700' : log.type === 'MEAL' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -1028,16 +1051,17 @@ const ScanHistory = () => {
                                              log.status === 'APPROVED' || log.status === 'SUCCESS' ? 'bg-green-100 text-green-700' : 
                                              log.status === 'REPEATED' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
                                              }`}>
-                                            {log.status === 'APPROVED' || log.status === 'SUCCESS' ? <Check size={12}/> : (log.status === 'REPEATED' ? <AlertTriangle size={12}/> : <X size={12}/>)}
+                                            {(log.status === 'APPROVED' || log.status === 'SUCCESS') ? <Check size={12}/> : (log.status === 'REPEATED' ? <AlertTriangle size={12}/> : <X size={12}/>)}
                                             {log.status}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-3 text-sm text-gray-500 truncate max-w-xs" title={log.message}>{log.message}</td>
-                                    <td className="px-6 py-3 text-sm text-gray-500">{log.scannedByName || log.scannedBy}</td>
-                                    <td className="px-6 py-3 text-xs text-gray-500 italic">{log.studentDropLocation || '-'}</td>
+                                    <td className="px-6 py-3 text-sm text-gray-500">
+                                        <div className="font-medium">{log.scannedByName || 'System'}</div>
+                                        <div className="text-[10px] opacity-60">{log.scannedBy}</div>
+                                    </td>
                                 </tr>
                             )) : (
-                                <tr><td colSpan={7} className="text-center py-8 text-gray-500">No logs found.</td></tr>
+                                <tr><td colSpan={6} className="text-center py-8 text-gray-500">No logs found.</td></tr>
                             )}
                         </tbody>
                     </table>
@@ -1120,7 +1144,7 @@ const Dashboard = ({ students, changeTab }) => {
 // 4. Student List Component
 const StudentList = ({ students, role }) => {
   const isAdmin = role === 'ADMIN';
-  const initialFilter = role === 'STAFF' ? 'ALL' : 'ALL';
+  const initialFilter = role === 'DRIVER' ? 'TRANSPORT_ONLY' : role === 'STAFF' ? 'MEAL_ONLY' : 'ALL';
   const [filter, setFilter] = useState(initialFilter);
   const [search, setSearch] = useState('');
   const [expandedStudentId, setExpandedStudentId] = useState(null);
@@ -1130,6 +1154,8 @@ const StudentList = ({ students, role }) => {
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
       let matchesFilter = true;
+      if (role === 'DRIVER' && !s.transport?.isPaid) return false;
+      if (role === 'STAFF' && !s.meal?.isPaid && !s.transport?.isPaid) return false;
 
       if (isAdmin) {
          if (filter === 'PAID') matchesFilter = s.transport?.isPaid && s.meal?.isPaid; 
@@ -1174,6 +1200,8 @@ const StudentList = ({ students, role }) => {
           const parts = line.split(',').map(p => p.trim());
           if (parts.length < 5) continue;
           const isTrue = (val) => val && ['yes', 'true', 'paid'].includes(val.toLowerCase());
+          
+          // Map CSV: Name, Gender, Class, Location, Admin No, TransportPaid, MealPaid, ParentName, Contact, Relation, BusNo, BusName
           newStudents.push({
               name: parts[0],
               gender: parts[1],
@@ -1184,14 +1212,14 @@ const StudentList = ({ students, role }) => {
               mealPaid: isTrue(parts[6]),
               parentName: parts[7] || '',
               parentContact: parts[8] || '',
-              parentRelationship: parts[9] || 'Guardian',
+              parentRelationship: parts[9] || 'Father',
               busNumber: parts[10] || '',
               busName: parts[11] || ''
           });
       }
       if (newStudents.length > 0) {
           const count = await bulkAddStudents(newStudents);
-          alert(`Successfully imported ${count} unique students.`);
+          alert(`Successfully imported ${count} unique students. Duplicates were skipped.`);
           setShowImportModal(false);
           setCsvText('');
       } else {
@@ -1207,7 +1235,7 @@ const StudentList = ({ students, role }) => {
     doc.setTextColor(100);
     doc.text(`Generated on: ${format(new Date(), 'PPpp')}`, 14, 30);
     
-    const filterName = isAdmin ? filter : (role === 'STAFF' ? 'Staff View' : 'All');
+    const filterName = isAdmin ? filter : (role === 'DRIVER' ? 'Transport Approved' : 'Meal Approved');
     doc.text(`Filter: ${filterName} | Total Records: ${filteredStudents.length}`, 14, 36);
 
     const studentsWithQR = await Promise.all(filteredStudents.map(async (s) => {
@@ -1320,14 +1348,14 @@ const StudentList = ({ students, role }) => {
     <div className="space-y-6 print-full-width">
       {showImportModal && isAdmin && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-4xl">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold">Import Students from CSV</h3>
               <button onClick={() => setShowImportModal(false)} className="text-gray-500 hover:text-gray-700"><X size={24} /></button>
             </div>
             <div className="mb-4 bg-blue-50 p-4 rounded text-xs text-blue-800">
-              <p className="font-bold mb-1">Expected Format:</p>
-              <p className="font-mono">Name, Gender, Class, DropLocation, Admin No., TransportPaid (Yes/No), MealPaid, ParentName, ParentContact, Relationship, BusNo, BusName</p>
+              <p className="font-bold mb-1">Expected Format (12 Columns):</p>
+              <p className="font-mono">Name, Gender, Class, DropLocation, AdminNo, TransportPaid(Y/N), MealPaid(Y/N), ParentName, ParentContact, Relationship, BusNo, BusName</p>
             </div>
             <textarea 
               className="w-full h-64 border border-gray-300 rounded-lg p-4 font-mono text-sm focus:ring-2 focus:ring-primary focus:outline-none"
@@ -1346,11 +1374,11 @@ const StudentList = ({ students, role }) => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">
-              {isAdmin ? 'Student Records' : 'Assigned Student List'}
+              {role === 'DRIVER' ? 'Approved Passengers' : role === 'STAFF' ? 'Meal & Transport List' : 'Student Records'}
           </h2>
           <p className="text-gray-500">
              {!isAdmin 
-               ? `View list of students.` 
+               ? `View only list of ${role === 'DRIVER' ? 'transport' : 'meal/transport'} approved students.` 
                : "Manage Transport and Meal payments"}
           </p>
         </div>
@@ -1409,8 +1437,9 @@ const StudentList = ({ students, role }) => {
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Student</th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Class</th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Admin No.</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Bus</th>
                 
-                {(isAdmin || role === 'STAFF') && (
+                {(isAdmin || role === 'DRIVER' || role === 'STAFF') && (
                      <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase text-center">
                         <div className="flex items-center justify-center space-x-1"><Bus size={14}/><span>Transport</span></div>
                     </th>
@@ -1434,8 +1463,9 @@ const StudentList = ({ students, role }) => {
                     <td className="px-6 py-4"><div className="font-medium text-gray-900">{student.name}</div><div className="text-xs text-gray-500">{student.gender}</div></td>
                     <td className="px-6 py-4 text-gray-600">{student.className}</td>
                     <td className="px-6 py-4 font-mono text-sm text-gray-500">{student.adminNumber}</td>
+                    <td className="px-6 py-4"><div className="text-sm font-bold text-indigo-700">{student.busNumber || '-'}</div><div className="text-[10px] text-gray-400">{student.busName || ''}</div></td>
                     
-                    {(isAdmin || role === 'STAFF') && (
+                    {(isAdmin || role === 'DRIVER' || role === 'STAFF') && (
                          <td className="px-6 py-4 text-center">
                             {!isAdmin ? (
                                 <PaymentBadge 
@@ -1489,31 +1519,24 @@ const StudentList = ({ students, role }) => {
                                     {/* Parent Info */}
                                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-bold text-gray-800 mb-4 flex items-center pb-2 border-b border-gray-100">
-                                            <User size={16} className="text-blue-600 mr-2"/> Parent/Guardian Info
+                                            <User size={16} className="text-blue-600 mr-2"/> Parent / Guardian Info
                                         </h4>
                                         <div className="space-y-2 text-sm">
-                                            <p><strong>Name:</strong> {student.parentName || '-'}</p>
-                                            <p><strong>Contact:</strong> {student.parentContact || '-'}</p>
-                                            <p><strong>Relationship:</strong> {student.parentRelationship || '-'}</p>
+                                            <p><span className="text-gray-400">Name:</span> <strong>{student.parentName || 'N/A'}</strong></p>
+                                            <p><span className="text-gray-400">Contact:</span> <strong>{student.parentContact || 'N/A'}</strong></p>
+                                            <p><span className="text-gray-400">Relation:</span> <strong>{student.parentRelationship || 'N/A'}</strong></p>
+                                            <p><span className="text-gray-400">Drop Loc:</span> <strong>{student.dropLocation || 'N/A'}</strong></p>
                                         </div>
                                     </div>
-                                    
-                                    {/* Transport Details */}
                                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-bold text-gray-800 mb-4 flex items-center pb-2 border-b border-gray-100">
-                                            <Bus size={16} className="text-indigo-600 mr-2"/> Transport Details
+                                            <Bus size={16} className="text-indigo-600 mr-2"/> Transport Payment History
                                         </h4>
-                                        <div className="space-y-2 text-sm mb-4">
-                                            <p><strong>Bus:</strong> {student.busName} ({student.busNumber})</p>
-                                            <p><strong>Drop-off:</strong> {student.dropLocation}</p>
-                                        </div>
                                         <HistoryList history={student.transport?.history} type="Transport" />
                                     </div>
-
-                                    {/* Meal History */}
                                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-bold text-gray-800 mb-4 flex items-center pb-2 border-b border-gray-100">
-                                            <Utensils size={16} className="text-orange-600 mr-2"/> Meal History
+                                            <Utensils size={16} className="text-orange-600 mr-2"/> Meal Payment History
                                         </h4>
                                         <HistoryList history={student.meal?.history} type="Meals" />
                                     </div>
@@ -1536,16 +1559,9 @@ const StudentList = ({ students, role }) => {
 // 5. Add Student Component
 const AddStudent = ({ onSuccess }) => {
   const [formData, setFormData] = useState({ 
-      name: '', 
-      className: '', 
-      adminNumber: '', 
-      gender: 'Male', 
-      dropLocation: '',
-      parentName: '',
-      parentContact: '',
-      parentRelationship: 'Father',
-      busNumber: '',
-      busName: ''
+    name: '', className: '', adminNumber: '', gender: 'Male', dropLocation: '',
+    parentName: '', parentContact: '', parentRelationship: 'Father',
+    busNumber: '', busName: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -1557,117 +1573,110 @@ const AddStudent = ({ onSuccess }) => {
     try {
       await addStudent(formData);
       setFormData({ 
-          name: '', 
-          className: '', 
-          adminNumber: '', 
-          gender: 'Male', 
-          dropLocation: '',
-          parentName: '',
-          parentContact: '',
-          parentRelationship: 'Father',
-          busNumber: '',
-          busName: ''
+        name: '', className: '', adminNumber: '', gender: 'Male', dropLocation: '',
+        parentName: '', parentContact: '', parentRelationship: 'Father',
+        busNumber: '', busName: ''
       });
       onSuccess();
-    } catch (err) {
-      setError(err.message || "Error adding student");
+    } catch (error) {
+      setError(error.message || "Error adding student");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto pb-10">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Register Student</h2>
         <p className="text-gray-500">Add a new student to the payment system</p>
       </div>
-
+      
       {error && (
-          <div className="mb-6 bg-red-50 text-red-700 p-4 rounded-lg flex items-center shadow-sm">
-              <AlertCircle size={20} className="mr-2" />
-              {error}
-          </div>
+        <div className="mb-6 p-4 bg-red-50 text-red-700 border border-red-100 rounded-xl flex items-center gap-2">
+            <AlertCircle size={20} /> {error}
+        </div>
       )}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-        <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Basic Info */}
-          <div>
-              <h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">Student Basic Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="col-span-1 md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <input type="text" required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. John Doe" />
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-primary border-b pb-4">
+                <User size={20}/> Student Information
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                    <input type="text" required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. John Doe" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                  <select value={formData.gender} onChange={e => setFormData({ ...formData, gender: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white">
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Class / Grade</label>
-                  <input type="text" required value={formData.className} onChange={e => setFormData({ ...formData, className: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 10-A" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                    <select value={formData.gender} onChange={e => setFormData({ ...formData, gender: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white">
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                    </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Administration No.</label>
-                  <input type="text" required value={formData.adminNumber} onChange={e => setFormData({ ...formData, adminNumber: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. ADM-2024-001" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Class / Grade</label>
+                    <input type="text" required value={formData.className} onChange={e => setFormData({ ...formData, className: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 10-A" />
                 </div>
-              </div>
-          </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Administration No.</label>
+                    <input type="text" required value={formData.adminNumber} onChange={e => setFormData({ ...formData, adminNumber: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. ADM-2024-001" />
+                </div>
+                <div className="lg:col-span-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Drop-off Point</label>
+                    <input type="text" value={formData.dropLocation} onChange={e => setFormData({ ...formData, dropLocation: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. Main Gate" />
+                </div>
+            </div>
+        </div>
 
-          {/* Parent Info */}
-          <div>
-              <h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">Parent / Guardian Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Parent Name</label>
-                  <input type="text" value={formData.parentName} onChange={e => setFormData({ ...formData, parentName: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. Robert Doe" />
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-success border-b pb-4">
+                <Shield size={20}/> Parent / Guardian Details
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Parent Name</label>
+                    <input type="text" required value={formData.parentName} onChange={e => setFormData({ ...formData, parentName: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success outline-none" placeholder="Full Name" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
-                  <input type="text" value={formData.parentContact} onChange={e => setFormData({ ...formData, parentContact: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. +1234567890" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
+                    <input type="tel" required value={formData.parentContact} onChange={e => setFormData({ ...formData, parentContact: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success outline-none" placeholder="+254..." />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
-                  <select value={formData.parentRelationship} onChange={e => setFormData({ ...formData, parentRelationship: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white">
-                    <option value="Father">Father</option>
-                    <option value="Mother">Mother</option>
-                    <option value="Guardian">Guardian</option>
-                  </select>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                    <select value={formData.parentRelationship} onChange={e => setFormData({ ...formData, parentRelationship: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success outline-none bg-white">
+                        <option value="Father">Father</option>
+                        <option value="Mother">Mother</option>
+                        <option value="Guardian">Guardian</option>
+                    </select>
                 </div>
-              </div>
-          </div>
+            </div>
+        </div>
 
-          {/* Transport Info */}
-          <div>
-              <h3 className="text-lg font-bold text-gray-700 mb-4 border-b pb-2">Transport Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+            <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-indigo-600 border-b pb-4">
+                <Bus size={20}/> Transport Assignment
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Bus Number</label>
-                  <input type="text" value={formData.busNumber} onChange={e => setFormData({ ...formData, busNumber: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. BUS-01" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bus Number (Identifier)</label>
+                    <input type="text" value={formData.busNumber} onChange={e => setFormData({ ...formData, busNumber: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="e.g. BUS-01" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Bus Name</label>
-                  <input type="text" value={formData.busName} onChange={e => setFormData({ ...formData, busName: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. Blue Line Express" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bus Route / Name</label>
+                    <input type="text" value={formData.busName} onChange={e => setFormData({ ...formData, busName: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="e.g. Westside Express" />
                 </div>
-                <div className="col-span-1 md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Drop-off Location</label>
-                  <input type="text" value={formData.dropLocation} onChange={e => setFormData({ ...formData, dropLocation: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary outline-none" placeholder="e.g. 123 Main Street" />
-                </div>
-              </div>
-          </div>
+            </div>
+        </div>
 
-          <div className="pt-4 flex justify-end">
-            <button type="submit" disabled={loading} className="bg-primary text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition shadow-md font-bold text-lg">
-              {loading ? 'Saving...' : 'Register Student'}
+        <div className="pt-4 flex justify-end">
+            <button type="submit" disabled={loading} className="bg-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg flex items-center gap-2">
+                {loading ? <RefreshCw className="animate-spin" size={20}/> : <Save size={20}/>}
+                {loading ? 'Saving Student...' : 'Register Student'}
             </button>
-          </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   );
 };
@@ -1680,7 +1689,7 @@ const Settings = ({ user }) => {
   
   // User Management State
   const [users, setUsers] = useState([]);
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'STAFF', assignedType: 'MEAL', assignedBus: '' });
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'STAFF', assignedBusNumber: '' });
   const [showUserForm, setShowUserForm] = useState(false);
 
   useEffect(() => {
@@ -1695,7 +1704,7 @@ const Settings = ({ user }) => {
       try {
           await addUser(newUser);
           setUsers(getStoredData(STORAGE_KEYS.USERS, []));
-          setNewUser({ name: '', email: '', password: '', role: 'STAFF', assignedType: 'MEAL', assignedBus: '' });
+          setNewUser({ name: '', email: '', password: '', role: 'STAFF', assignedBusNumber: '' });
           setShowUserForm(false);
           setMsg({ type: 'success', text: 'User added successfully' });
       } catch(e) {
@@ -1740,31 +1749,29 @@ const Settings = ({ user }) => {
                 <h3 className="text-lg font-bold text-gray-800">User Management</h3>
              </div>
              <button onClick={() => setShowUserForm(!showUserForm)} className="text-sm bg-gray-100 px-3 py-1 rounded hover:bg-gray-200">
-                {showUserForm ? 'Cancel' : 'Add User'}
+                {showUserForm ? 'Cancel' : 'Add Staff'}
              </button>
         </div>
         
         {showUserForm && (
-            <form onSubmit={handleUserAdd} className="mb-6 bg-gray-50 p-4 rounded-lg grid grid-cols-1 md:grid-cols-2 gap-4">
-                <input type="text" placeholder="Name" required className="p-2 border rounded" value={newUser.name} onChange={e=>setNewUser({...newUser, name: e.target.value})} />
-                <input type="email" placeholder="Email" required className="p-2 border rounded" value={newUser.email} onChange={e=>setNewUser({...newUser, email: e.target.value})} />
+            <form onSubmit={handleUserAdd} className="mb-6 bg-gray-50 p-6 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4 border border-gray-200">
+                <div className="md:col-span-2 text-xs font-bold text-gray-400 uppercase mb-2">Login Credentials</div>
+                <input type="text" placeholder="Full Name" required className="p-2 border rounded" value={newUser.name} onChange={e=>setNewUser({...newUser, name: e.target.value})} />
+                <input type="email" placeholder="Email (Username)" required className="p-2 border rounded" value={newUser.email} onChange={e=>setNewUser({...newUser, email: e.target.value})} />
                 <input type="password" placeholder="Password" required className="p-2 border rounded" value={newUser.password} onChange={e=>setNewUser({...newUser, password: e.target.value})} />
                 <select className="p-2 border rounded" value={newUser.role} onChange={e=>setNewUser({...newUser, role: e.target.value})}>
-                    <option value="STAFF">Staff</option>
-                    <option value="ADMIN">Admin</option>
+                    <option value="STAFF">Staff Member</option>
+                    <option value="ADMIN">Administrator</option>
                 </select>
-                {newUser.role === 'STAFF' && (
-                    <>
-                        <select className="p-2 border rounded" value={newUser.assignedType} onChange={e=>setNewUser({...newUser, assignedType: e.target.value})}>
-                            <option value="MEAL">In charge of Meals</option>
-                            <option value="TRANSPORT">In charge of Transport</option>
-                        </select>
-                        {newUser.assignedType === 'TRANSPORT' && (
-                            <input type="text" placeholder="Assigned Bus Number" className="p-2 border rounded" value={newUser.assignedBus} onChange={e=>setNewUser({...newUser, assignedBus: e.target.value})} />
-                        )}
-                    </>
-                )}
-                <button type="submit" className="md:col-span-2 bg-indigo-600 text-white p-2 rounded hover:bg-indigo-700">Create User</button>
+
+                <div className="md:col-span-2 mt-4 text-xs font-bold text-indigo-400 uppercase mb-2">Service Configuration (Staff Only)</div>
+                <div className="md:col-span-2">
+                    <label className="block text-xs text-gray-500 mb-1">Assigned Bus Number (Optional - Set if staff is for Transport)</label>
+                    <input type="text" placeholder="e.g. BUS-01" className="p-2 border rounded w-full" value={newUser.assignedBusNumber} onChange={e=>setNewUser({...newUser, assignedBusNumber: e.target.value})} />
+                    <p className="text-[10px] text-gray-400 mt-1 italic">* Staff without an assigned bus will handle Meal Scanning only.</p>
+                </div>
+
+                <button type="submit" className="md:col-span-2 bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 font-bold shadow-lg transition mt-4">Create System User</button>
             </form>
         )}
 
@@ -1772,11 +1779,8 @@ const Settings = ({ user }) => {
             {users.map(u => (
                 <div key={u.uid} className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-100">
                     <div>
-                        <p className="font-bold text-sm">{u.name} <span className="text-xs font-normal text-gray-500">({u.role})</span></p>
-                        <p className="text-xs text-gray-400">
-                            {u.email} 
-                            {u.role === 'STAFF' && ` • ${u.assignedType} ${u.assignedBus ? `(Bus ${u.assignedBus})` : ''}`}
-                        </p>
+                        <p className="font-bold text-sm">{u.name} <span className={`text-[10px] uppercase px-2 py-0.5 rounded ml-2 ${u.role === 'ADMIN' ? 'bg-slate-800 text-white' : 'bg-indigo-100 text-indigo-700'}`}>{u.role}</span></p>
+                        <p className="text-xs text-gray-400">{u.email} {u.assignedBusNumber && <span className="text-blue-600 font-bold ml-2">• Assigned to {u.assignedBusNumber}</span>}</p>
                     </div>
                     {u.uid !== user.uid && (
                         <button onClick={() => handleUserDelete(u.uid)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={16}/></button>
@@ -1827,7 +1831,7 @@ const App = () => {
     if (!userProfile) return;
     
     // Auto-navigate based on role
-    if (userProfile.role === 'STAFF') {
+    if (userProfile.role === 'STAFF' || userProfile.role === 'DRIVER') {
         if (currentTab === 'DASHBOARD' || currentTab === 'SETTINGS' || currentTab === 'ADD_STUDENT' || currentTab === 'HISTORY') {
             setCurrentTab('STUDENTS');
         }
@@ -1892,17 +1896,20 @@ const App = () => {
         </div>
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {isAdmin && <NavItem tab="DASHBOARD" icon={LayoutDashboard} label="Dashboard" />}
-          <NavItem tab="STUDENTS" icon={Users} label={isAdmin ? "Students" : "Assigned List"} />
+          <NavItem tab="STUDENTS" icon={Users} label={isAdmin ? "Students" : "List"} />
           {isAdmin && <NavItem tab="ADD_STUDENT" icon={UserPlus} label="Add Student" />}
-          {isAdmin && <NavItem tab="HISTORY" icon={List} label="All Activity" />}
+          {isAdmin && <NavItem tab="HISTORY" icon={List} label="Reports / Logs" />}
           {isAdmin && <NavItem tab="SETTINGS" icon={SettingsIcon} label="Settings" />}
           <NavItem tab="SCANNER" icon={ScanLine} label="QR Scanner" />
         </nav>
         <div className="p-4 border-t border-gray-100">
-          <div className="mb-4 px-4"><p className="text-xs text-gray-400 uppercase font-semibold">Logged in as</p><p className="text-sm font-medium text-gray-700 truncate">{userProfile.name}</p>
-          <p className="text-xs text-blue-500 font-semibold mt-1">
-            {userProfile.role} {userProfile.role === 'STAFF' && `(${userProfile.assignedType})`}
-          </p></div>
+          <div className="mb-4 px-4">
+            <p className="text-xs text-gray-400 uppercase font-semibold">Logged in as</p>
+            <p className="text-sm font-medium text-gray-700 truncate">{userProfile.name}</p>
+            <p className="text-xs text-blue-500 font-semibold mt-1">
+                {userProfile.role} {userProfile.assignedBusNumber ? `• ${userProfile.assignedBusNumber}` : ''}
+            </p>
+          </div>
           <button onClick={handleLogout} className="flex items-center space-x-3 w-full px-4 py-3 rounded-lg text-danger hover:bg-red-50 transition-colors"><LogOut size={20} /><span className="font-medium">Sign Out</span></button>
         </div>
       </aside>
