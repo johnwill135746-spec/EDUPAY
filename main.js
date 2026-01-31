@@ -77,42 +77,17 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                 name: 'System Admin',
                 email: 'admin@school.com',
                 password: 'password', 
-                role: 'ADMIN',
-                pin: '2026'
+                role: 'ADMIN'
             }]);
-        } else {
-            // Migrate existing users to have a PIN if they don't have one
-            let needsUpdate = false;
-            const updatedUsers = users.map(u => {
-                if (!u.pin) {
-                    needsUpdate = true;
-                    return { ...u, pin: '0000' };
-                }
-                return u;
-            });
-            if (needsUpdate) {
-                setStoredData(STORAGE_KEYS.USERS, updatedUsers);
-            }
         }
     };
 
     const addUser = async (user) => {
         const users = getStoredData(STORAGE_KEYS.USERS, []);
         if (users.some(u => u.email === user.email)) throw new Error("Email already exists.");
-        const newUser = { ...user, uid: generateUniqueId(), pin: user.pin || '0000' };
+        const newUser = { ...user, uid: generateUniqueId() };
         setStoredData(STORAGE_KEYS.USERS, [...users, newUser]);
         return newUser;
-    };
-
-    const updateUserPin = async (uid, newPin) => {
-        const users = getStoredData(STORAGE_KEYS.USERS, []);
-        const idx = users.findIndex(u => u.uid === uid);
-        if (idx > -1) {
-            users[idx].pin = newPin;
-            setStoredData(STORAGE_KEYS.USERS, users);
-            return true;
-        }
-        throw new Error("User not found");
     };
 
     const removeUser = async (uid) => {
@@ -723,10 +698,14 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
         try {
           const result = await mockAuth.signIn(email, password);
           
-          // All users now need PIN verification
-          setTempUser(result.user);
-          setStage('PIN');
-          setLoading(false);
+          if (result.user.role === 'ADMIN') {
+              setTempUser(result.user);
+              setStage('PIN');
+              setLoading(false);
+          } else {
+              // Staff/Driver login immediately (no PIN needed)
+              onLoginSuccess(result.user);
+          }
         } catch (err) {
           setError(err.message || "Authentication failed");
           setLoading(false);
@@ -746,12 +725,16 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
                   role: regRole
               };
 
-              const createdUser = await addUser(newUser);
+              await addUser(newUser);
               
-              // All users need PIN verification after registration
-              setTempUser(createdUser);
-              setStage('PIN');
-              setLoading(false);
+              // Auto-login logic
+              if (newUser.role === 'ADMIN') {
+                  setTempUser(newUser);
+                  setStage('PIN');
+                  setLoading(false);
+              } else {
+                  onLoginSuccess(newUser);
+              }
           } catch (err) {
               setError(err.message || "Registration failed");
               setLoading(false);
@@ -764,14 +747,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
         setError('');
 
         try {
-          // Verify against user's stored PIN
-          const users = getStoredData(STORAGE_KEYS.USERS, []);
-          const user = users.find(u => u.uid === tempUser.uid);
-          
-          if (user && pin === user.pin) {
-            onLoginSuccess(user);
+          if (pin === '2026') {
+            onLoginSuccess(tempUser);
           } else {
-            setError('Incorrect PIN.');
+            setError('Incorrect Admin PIN.');
             setLoading(false);
           }
         } catch (err) {
@@ -793,7 +772,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
             <div className="p-8">
               <h3 className="text-xl font-bold text-gray-800 mb-6 text-center">
-                 {stage === 'PIN' ? 'PIN Verification' : (isRegistering ? 'Create Account' : 'Login to Dashboard')}
+                 {stage === 'PIN' ? 'Admin Verification' : (isRegistering ? 'Create Account' : 'Login to Dashboard')}
               </h3>
 
               {error && (
@@ -1569,10 +1548,6 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
       const [users, setUsers] = useState([]);
       const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'STAFF' });
       const [showUserForm, setShowUserForm] = useState(false);
-      
-      // PIN Management State
-      const [editingPinUid, setEditingPinUid] = useState(null);
-      const [newPin, setNewPin] = useState('');
 
       useEffect(() => {
         getAppSettings().then(settings => {
@@ -1588,7 +1563,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
               setUsers(getStoredData(STORAGE_KEYS.USERS, []));
               setNewUser({ name: '', email: '', password: '', role: 'STAFF' });
               setShowUserForm(false);
-              setMsg({ type: 'success', text: 'User added successfully (Default PIN: 0000)' });
+              setMsg({ type: 'success', text: 'User added successfully' });
           } catch(e) {
               setMsg({ type: 'error', text: e.message });
           }
@@ -1599,22 +1574,6 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
           if(confirm("Delete this user?")) {
               removeUser(uid);
               setUsers(getStoredData(STORAGE_KEYS.USERS, []));
-          }
-      };
-
-      const handlePinChange = async (uid) => {
-          if (!newPin || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
-              setMsg({ type: 'error', text: 'PIN must be exactly 4 digits.' });
-              return;
-          }
-          try {
-              await updateUserPin(uid, newPin);
-              setUsers(getStoredData(STORAGE_KEYS.USERS, []));
-              setEditingPinUid(null);
-              setNewPin('');
-              setMsg({ type: 'success', text: 'PIN updated successfully.' });
-          } catch (e) {
-              setMsg({ type: 'error', text: e.message });
           }
       };
 
@@ -1667,52 +1626,13 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 
             <div className="space-y-2">
                 {users.map(u => (
-                    <div key={u.uid} className="p-3 bg-gray-50 rounded border border-gray-100">
-                        <div className="flex justify-between items-center">
-                            <div>
-                                <p className="font-bold text-sm">{u.name} <span className="text-xs font-normal text-gray-500">({u.role})</span></p>
-                                <p className="text-xs text-gray-400">{u.email}</p>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                <button 
-                                    onClick={() => {
-                                        if (editingPinUid === u.uid) {
-                                            setEditingPinUid(null);
-                                            setNewPin('');
-                                        } else {
-                                            setEditingPinUid(u.uid);
-                                            setNewPin('');
-                                        }
-                                    }} 
-                                    className="text-xs bg-blue-100 text-blue-700 px-3 py-1.5 rounded hover:bg-blue-200 flex items-center gap-1"
-                                >
-                                    <KeyRound size={14} />
-                                    {editingPinUid === u.uid ? 'Cancel' : 'Change PIN'}
-                                </button>
-                                {u.uid !== user.uid && (
-                                    <button onClick={() => handleUserDelete(u.uid)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={16}/></button>
-                                )}
-                            </div>
+                    <div key={u.uid} className="flex justify-between items-center p-3 bg-gray-50 rounded border border-gray-100">
+                        <div>
+                            <p className="font-bold text-sm">{u.name} <span className="text-xs font-normal text-gray-500">({u.role})</span></p>
+                            <p className="text-xs text-gray-400">{u.email}</p>
                         </div>
-                        
-                        {/* PIN Edit Form */}
-                        {editingPinUid === u.uid && (
-                            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center gap-2">
-                                <input 
-                                    type="text" 
-                                    maxLength={4}
-                                    placeholder="Enter new 4-digit PIN"
-                                    className="flex-1 p-2 border rounded text-center font-mono text-lg tracking-widest"
-                                    value={newPin}
-                                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                                />
-                                <button 
-                                    onClick={() => handlePinChange(u.uid)}
-                                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm font-medium"
-                                >
-                                    Save PIN
-                                </button>
-                            </div>
+                        {u.uid !== user.uid && (
+                            <button onClick={() => handleUserDelete(u.uid)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={16}/></button>
                         )}
                     </div>
                 ))}
